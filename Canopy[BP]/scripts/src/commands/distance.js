@@ -1,124 +1,152 @@
-import { Command, Commands } from "../../lib/canopy/Canopy";
+import { CommandPermissionLevel, CustomCommandParamType, CustomCommandStatus } from "@minecraft/server";
+import { PlayerCommandOrigin, VanillaCommand } from "../../lib/canopy/Canopy";
 import { stringifyLocation, getRaycastResults, getClosestTarget, calcDistance } from "../../include/utils";
 
-let savedLocation = { x: undefined, y: undefined, z: undefined };
-const MAX_DISTANCE = 64*16;
+const DISTANCE_ACTIONS = Object.freeze([
+    'target',
+    'from',
+    'to'
+]);
 
-const cmd = new Command({
-    name: 'distance',
-    description: { translate: 'commands.distance' },
-    usage: `distance [from [x y z]] [to [x y z]] OR ${Commands.getPrefix()}distance target`,
-    args: [
-        { type: 'string', name: 'actionArgOne' },
-        { type: 'float', name: 'fromArgX' },
-        { type: 'float', name: 'fromArgY' },
-        { type: 'float', name: 'fromArgZ' },
-        { type: 'string', name: 'actionArgTwo' },
-        { type: 'float', name: 'toArgX' },
-        { type: 'float', name: 'toArgY' },
-        { type: 'float', name: 'toArgZ' }
-    ],
-    callback: distanceCommand,
-    helpEntries: [
-        { usage: `distance target`, description: { translate: 'commands.distance.target' }, wikiDescription: 'Calculates the distance in blocks between your head and the block or entity you are looking at down to three decimal places. Note that entity positions are at their foot. Alias: **`./d target`**' },
-        { usage: `distance from <x y z> to [x y z]`, description: { translate: 'commands.distance.fromto' }, wikiDescription: 'Calculates the distance in blocks between the two points. The `to` coordinates can be omitted to use your player\'s position. Alias: **`./d from <x y z> to [x y z]`**' },
-        { usage: `distance from [x y z]`, description: { translate: 'commands.distance.from' }, wikiDescription: 'Saves a location to calculate distance to later. The coordinates can be omitted to use your player\'s position. Alias: **`./d from [x y z]`**' },
-        { usage: `distance to [x y z]`, description: { translate: 'commands.distance.to' }, wikiDescription: 'Calculates the distance in blocks between the saved location and the specified coordinates. The coordinates can be omitted to use your player\'s position. Alias: **`./d to [x y z]`**' }
-    ]
-});
+const DISTANCE_CONNECTORS = Object.freeze([
+    'to'
+]);
 
-new Command({
-    name: 'd',
-    description: { translate: 'commands.distance' },
-    args: [
-        { type: 'string', name: 'actionArgOne' },
-        { type: 'float', name: 'fromArgX' },
-        { type: 'float', name: 'fromArgY' },
-        { type: 'float', name: 'fromArgZ' },
-        { type: 'string', name: 'actionArgTwo' },
-        { type: 'float', name: 'toArgX' },
-        { type: 'float', name: 'toArgY' },
-        { type: 'float', name: 'toArgZ' }
-    ],
-    usage: `d to [from [x y z]] [to [x y z]] OR ${Commands.getPrefix()}d target`,
-    callback: distanceCommand,
-    helpHidden: true
-});
+const MAX_DISTANCE = 64 * 16;
 
-function distanceCommand(sender, args) {
-    const { actionArgOne, actionArgTwo } = args;
-    
-    let message;
-    if (actionArgOne === 'from' && actionArgTwo !== 'to')
-        message = trySaveLocation(sender, args);
-    else if (actionArgOne === 'to')
-        message = tryCalculateDistanceFromSave(sender, args);
-    else if (actionArgOne === 'from' && actionArgTwo === 'to')
-        message = tryCalculateDistance(sender, args);
-    else if (actionArgOne === 'target')
-        message = targetDistance(sender, args);
-    else
-        message = { translate: 'commands.generic.usage', with: [cmd.getUsage()] };
-    sender.sendMessage(message);
-}
+export class DistanceCommand extends VanillaCommand {
+    savedLocation;
 
-function trySaveLocation(sender, args) {
-    const { fromArgX, fromArgY, fromArgZ } = args;
-    if (areUndefined(fromArgX, fromArgY, fromArgZ))
-        savedLocation = sender.location;
-    else if (areDefined(fromArgX, fromArgY, fromArgZ))
-        savedLocation = { x: fromArgX, y: fromArgY, z: fromArgZ };
-    else
-        return { translate: 'commands.generic.usage', with: [`${Commands.getPrefix()}distance from [x y z]`] }
-
-    return { translate: 'commands.distance.from.success', with: [stringifyLocation(savedLocation)] };
-}
-
-function tryCalculateDistanceFromSave(sender, args) {
-    const { fromArgX, fromArgY, fromArgZ } = args;
-    
-    if (!hasSavedLocation() || (savedLocation.x === null && savedLocation.y === null && savedLocation.z === null))
-        return { translate: 'commands.distance.to.fail.nosave', with: [Commands.getPrefix()] };
-    const fromLocation = savedLocation;
-    
-    let toLocation;
-    if (areDefined(fromArgX, fromArgY, fromArgZ))
-        toLocation = { x: fromArgX, y: fromArgY, z: fromArgZ };
-    else if (areUndefined(fromArgX, fromArgY, fromArgZ))
-        toLocation = sender.location;
-    else
-        return { translate: 'commands.generic.usage', with: [`${Commands.getPrefix()}distance to [x y z]`] };
-
-    return getCompleteOutput(fromLocation, toLocation);
-}
-
-function tryCalculateDistance(sender, args) {
-    const { fromArgX, fromArgY, fromArgZ, toArgX, toArgY, toArgZ } = args;
-    const necessaryArgs = areDefined(fromArgX, fromArgY, fromArgZ);
-    let fromLocation;
-    let toLocation;
-
-    if (necessaryArgs && areUndefined(toArgX, toArgY, toArgZ)) {
-        fromLocation = { x: fromArgX, y: fromArgY, z: fromArgZ };
-        toLocation = sender.location;
-    } else if (necessaryArgs && areDefined(toArgX, toArgY, toArgZ)) {
-        fromLocation = { x: fromArgX, y: fromArgY, z: fromArgZ };
-        toLocation = { x: toArgX, y: toArgY, z: toArgZ };
-    } else {
-        return { translate: 'commands.generic.usage', with: [`${Commands.getPrefix()}distance from <x y z> to [x y z]`] };
+    constructor() {
+        super({
+            name: 'canopy:distance',
+            description: 'commands.distance',
+            enums: [
+                {
+                    name: 'canopy:distanceAction',
+                    values: DISTANCE_ACTIONS
+                },
+                {
+                    name: 'canopy:distanceConnector',
+                    values: DISTANCE_CONNECTORS
+                }
+            ],
+            mandatoryParameters: [
+                {
+                    name: 'canopy:distanceAction',
+                    type: CustomCommandParamType.Enum
+                }
+            ],
+            optionalParameters: [
+                {
+                    name: 'location',
+                    type: CustomCommandParamType.Location
+                },
+                {
+                    name: 'canopy:distanceConnector',
+                    type: CustomCommandParamType.Enum
+                },
+                {
+                    name: 'location',
+                    type: CustomCommandParamType.Location
+                }
+            ],
+            permissionLevel: CommandPermissionLevel.Any,
+            allowedSources: [PlayerCommandOrigin],
+            aliases: ['canopy:d'],
+            callback: (origin, ...args) => this.distanceCommand(origin, ...args),
+            wikiDescription: 'Measures distance between locations or to the block or entity you are looking at. '
+                + 'Use `target` to measure to your current target, `from [location]` to save a location, '
+                + '`to [location]` to measure from the saved location, or `from <location> to [destination]` '
+                + 'to measure directly between two points. Omitted locations use your current position. '
+                + 'Alias: **`/d`**.'
+        });
     }
 
-    return getCompleteOutput(fromLocation, toLocation);
+    distanceCommand(origin, action, location, connector, destination) {
+        const player = origin.getSource();
+        let message;
+
+        if (action === 'target') {
+            if (location || connector || destination)
+                return this.invalidUsage(origin);
+            message = targetDistance(player);
+        } else if (action === 'from') {
+            if (destination && connector !== 'to')
+                return this.invalidUsage(origin);
+
+            if (connector === void 0) {
+                if (destination)
+                    return this.invalidUsage(origin);
+                message = this.saveLocation(player, location);
+            } else if (connector === 'to' && location) {
+                message = getCompleteOutput(location, destination ?? player.location);
+            } else {
+                return this.invalidUsage(origin);
+            }
+        } else if (action === 'to') {
+            if (connector || destination)
+                return this.invalidUsage(origin);
+            message = this.calculateFromSavedLocation(player, location);
+        } else {
+            return {
+                status: CustomCommandStatus.Failure,
+                message: 'commands.generic.invalidaction'
+            };
+        }
+
+        origin.sendMessage(message);
+        return { status: CustomCommandStatus.Success };
+    }
+
+    saveLocation(player, location) {
+        const source = location ?? player.location;
+        this.savedLocation = {
+            x: source.x,
+            y: source.y,
+            z: source.z
+        };
+
+        return {
+            translate: 'commands.distance.from.success',
+            with: [stringifyLocation(this.savedLocation)]
+        };
+    }
+
+    calculateFromSavedLocation(player, destination) {
+        if (!this.savedLocation) {
+            return {
+                translate: 'commands.distance.to.fail.nosave',
+                with: ['/canopy:']
+            };
+        }
+
+        return getCompleteOutput(
+            this.savedLocation,
+            destination ?? player.location
+        );
+    }
+
+    invalidUsage(origin) {
+        origin.sendMessage({
+            translate: 'commands.generic.usage',
+            with: ['/canopy:distance <target|from|to> [location] [to] [location]']
+        });
+
+        return { status: CustomCommandStatus.Failure };
+    }
 }
 
-function targetDistance(sender) {
-    const playerLocation = sender.getHeadLocation();
+function targetDistance(player) {
+    const playerLocation = player.getHeadLocation();
     let targetLocation;
 
-    const { blockRayResult, entityRayResult } = getRaycastResults(sender, MAX_DISTANCE);
+    const { blockRayResult, entityRayResult } = getRaycastResults(player, MAX_DISTANCE);
+
     if (!blockRayResult && !entityRayResult[0])
         return { translate: 'commands.distance.target.notfound' };
-    const target = getClosestTarget(sender, blockRayResult, entityRayResult);
+
+    const target = getClosestTarget(player, blockRayResult, entityRayResult);
 
     try {
         targetLocation = target.location;
@@ -129,37 +157,58 @@ function targetDistance(sender) {
     return getCompleteOutput(playerLocation, targetLocation);
 }
 
-function areDefined(x, y, z) {
-    return x !== null && y !== null && z !== null;
-}
-
-function areUndefined(x, y, z) {
-    return x === null && y === null && z === null;
-}
-
-function hasSavedLocation() {
-    return savedLocation && (savedLocation.x !== undefined && savedLocation.y !== undefined && savedLocation.z !== undefined);
-}
-
 function calculateDistances(locationOne, locationTwo) {
     const cartesianDistance = calcDistance(locationOne, locationTwo, true);
     const cylindricalDistance = calcDistance(locationOne, locationTwo, false);
-    const manhattanDistance = Math.abs(locationOne.x - locationTwo.x) + Math.abs(locationOne.y - locationTwo.y) + Math.abs(locationOne.z - locationTwo.z);
+    const manhattanDistance = Math.abs(locationOne.x - locationTwo.x)
+        + Math.abs(locationOne.y - locationTwo.y)
+        + Math.abs(locationOne.z - locationTwo.z);
 
-    return { cartesianDistance, cylindricalDistance, manhattanDistance };
+    return {
+        cartesianDistance,
+        cylindricalDistance,
+        manhattanDistance
+    };
 }
 
 function getCompleteOutput(locationOne, locationTwo) {
-    const { cartesianDistance, cylindricalDistance, manhattanDistance } = calculateDistances(locationOne, locationTwo);
-    const message = {
+    const {
+        cartesianDistance,
+        cylindricalDistance,
+        manhattanDistance
+    } = calculateDistances(locationOne, locationTwo);
+
+    return {
         rawtext: [
-            { text: `§7Distance from §a${stringifyLocation(locationOne)}§7 to §a${stringifyLocation(locationTwo)}§7:\n` },
-            { rawtext: [
-                { translate: 'commands.distance.cartesian', with: [cartesianDistance.toFixed(3)] }, { text: '\n' },
-                { translate: 'commands.distance.cylindrical', with: [cylindricalDistance.toFixed(3)] }, { text: '\n' },
-                { translate: 'commands.distance.manhattan', with: [manhattanDistance.toFixed(3)] }, { text: '\n' }
-            ]}
+            {
+                text: `§7Distance from §a${stringifyLocation(locationOne)}§7 to §a${stringifyLocation(locationTwo)}§7:\n`
+            },
+            {
+                rawtext: [
+                    {
+                        translate: 'commands.distance.cartesian',
+                        with: [cartesianDistance.toFixed(3)]
+                    },
+                    { text: '\n' },
+                    {
+                        translate: 'commands.distance.cylindrical',
+                        with: [cylindricalDistance.toFixed(3)]
+                    },
+                    { text: '\n' },
+                    {
+                        translate: 'commands.distance.manhattan',
+                        with: [manhattanDistance.toFixed(3)]
+                    },
+                    { text: '\n' }
+                ]
+            }
         ]
-    }
-    return message;
+    };
 }
+
+export const distanceCommand = new DistanceCommand();
+
+export {
+    DISTANCE_ACTIONS,
+    DISTANCE_CONNECTORS
+};
