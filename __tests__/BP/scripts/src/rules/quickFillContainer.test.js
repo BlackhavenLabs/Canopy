@@ -441,6 +441,89 @@ describe('quickFillContainer', () => {
         expect(apply).not.toHaveBeenCalled();
     });
 
+    test.each([
+        ['minecart_chest', 'minecraft:chest_minecart'],
+        ['minecart_hopper', 'minecraft:hopper_minecart'],
+        ['chest_boat', 'minecraft:chest_boat']
+    ])('held-item attack copies non-alive %s storage without applying damage', (containerType, typeId) => {
+        const player = makePlayer(new Container({ size: 4 }));
+        const entityInv = new Container({ size: 27 });
+        const entity = makeEntity(entityInv, typeId, false, 5, containerType);
+
+        vi.spyOn(quickFillContainer, 'isEnabledForPlayer').mockReturnValue(true);
+        const copy = vi.spyOn(QuickFillClipboardController, 'copy').mockImplementation(() => {});
+        vi.spyOn(system, 'run').mockImplementation(callback => callback());
+
+        const event = {
+            player,
+            target: entity,
+            itemStack: new ItemStack('minecraft:stone'),
+            cancel: false
+        };
+
+        quickFillContainer.onPlayerItemAttackEntity(event);
+
+        expect(event.cancel).toBe(true);
+        expect(copy).toHaveBeenCalledWith(player, entity, entityInv);
+    });
+
+    test('empty-hand attack on non-alive storage is not intercepted', () => {
+        const player = makePlayer(new Container({ size: 4 }));
+        const entity = makeEntity(
+            new Container({ size: 27 }),
+            'minecraft:chest_minecart',
+            false,
+            5,
+            'minecart_chest'
+        );
+
+        vi.spyOn(quickFillContainer, 'isEnabledForPlayer').mockReturnValue(true);
+        const copy = vi.spyOn(QuickFillClipboardController, 'copy').mockImplementation(() => {});
+
+        const event = {
+            player,
+            target: entity,
+            itemStack: undefined,
+            cancel: false
+        };
+
+        quickFillContainer.onPlayerItemAttackEntity(event);
+
+        expect(event.cancel).toBe(false);
+        expect(copy).not.toHaveBeenCalled();
+    });
+
+    test('sneak + held-item attack deactivates the clipboard for non-alive storage', () => {
+        const player = makePlayer(new Container({ size: 4 }));
+        const entity = makeEntity(
+            new Container({ size: 27 }),
+            'minecraft:chest_minecart',
+            false,
+            5,
+            'minecart_chest'
+        );
+
+        player.inputInfo.getButtonState.mockReturnValue(ButtonState.Pressed);
+        vi.spyOn(quickFillContainer, 'isEnabledForPlayer').mockReturnValue(true);
+        vi.spyOn(QuickFillClipboardController, 'get').mockReturnValue({});
+        const deactivate = vi.spyOn(QuickFillClipboardController, 'deactivate').mockImplementation(() => {});
+        const copy = vi.spyOn(QuickFillClipboardController, 'copy').mockImplementation(() => {});
+        vi.spyOn(system, 'run').mockImplementation(callback => callback());
+
+        const event = {
+            player,
+            target: entity,
+            itemStack: new ItemStack('minecraft:stone'),
+            cancel: false
+        };
+
+        quickFillContainer.onPlayerItemAttackEntity(event);
+
+        expect(event.cancel).toBe(true);
+        expect(deactivate).toHaveBeenCalledWith(player);
+        expect(copy).not.toHaveBeenCalled();
+    });
+
     test('attacking supported entity storage copies it without applying damage', () => {
         const player = makePlayer(new Container({ size: 4 }));
         const entityInv = new Container({ size: 16 });

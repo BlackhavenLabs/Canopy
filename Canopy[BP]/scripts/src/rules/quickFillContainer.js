@@ -16,18 +16,21 @@ class QuickFillContainer extends AbilityRule {
                 world.beforeEvents.playerBreakBlock.subscribe(this.onPlayerBreakBlockBound);
                 world.beforeEvents.playerInteractWithEntity.subscribe(this.onPlayerInteractWithEntityBound);
                 world.beforeEvents.entityHurt.subscribe(this.onEntityHurtBound);
+                world.beforeEvents.playerItemAttackEntity.subscribe(this.onPlayerItemAttackEntityBound);
             },
             onDisableCallback: () => {
                 world.beforeEvents.playerInteractWithBlock.unsubscribe(this.onPlayerInteractWithBlockBound);
                 world.beforeEvents.playerBreakBlock.unsubscribe(this.onPlayerBreakBlockBound);
                 world.beforeEvents.playerInteractWithEntity.unsubscribe(this.onPlayerInteractWithEntityBound);
                 world.beforeEvents.entityHurt.unsubscribe(this.onEntityHurtBound);
+                world.beforeEvents.playerItemAttackEntity.unsubscribe(this.onPlayerItemAttackEntityBound);
             }
         }, { slotNumber: 9 });
         this.onPlayerInteractWithBlockBound = this.onPlayerInteractWithBlock.bind(this);
         this.onPlayerBreakBlockBound = this.onPlayerBreakBlock.bind(this);
         this.onPlayerInteractWithEntityBound = this.onPlayerInteractWithEntity.bind(this);
         this.onEntityHurtBound = this.onEntityHurt.bind(this);
+        this.onPlayerItemAttackEntityBound = this.onPlayerItemAttackEntity.bind(this);
     }
 
     onPlayerInteractWithBlock(event) {
@@ -131,6 +134,33 @@ class QuickFillContainer extends AbilityRule {
             return;
 
         const entityInv = QuickFillContainerPolicy.getEntityContainer(entity);
+        if (!entityInv)
+            return;
+
+        const playerIsSneaking = player.inputInfo.getButtonState(InputButton.Sneak) === ButtonState.Pressed;
+        if (playerIsSneaking && !QuickFillClipboardController.get(player))
+            return;
+
+        event.cancel = true;
+        system.run(() => {
+            if (playerIsSneaking) {
+                QuickFillClipboardController.deactivate(player);
+                return;
+            }
+            QuickFillClipboardController.copy(player, entity, entityInv);
+        });
+    }
+
+    onPlayerItemAttackEntity(event) {
+        const player = event.player;
+        const entity = event.target;
+        if (!player || !this.isEnabledForPlayer(player) || !event.itemStack)
+            return;
+
+        if (QuickFillContainerPolicy.getEntityContainer(entity))
+            return;
+
+        const entityInv = QuickFillContainerPolicy.getInteractableEntityContainer(entity);
         if (!entityInv)
             return;
 
